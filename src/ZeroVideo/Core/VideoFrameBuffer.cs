@@ -112,17 +112,17 @@ namespace ZeroVideo.Core
         /// <summary>
         /// Returns a span over the active pixel data buffer.
         /// </summary>
-        public Span<byte> AsSpan() => new Span<byte>(Data);
+        public virtual Span<byte> AsSpan() => new Span<byte>(Data);
 
         /// <summary>
         /// Returns a read-only span over the active pixel data buffer.
         /// </summary>
-        public ReadOnlySpan<byte> AsReadOnlySpan() => new ReadOnlySpan<byte>(Data);
+        public virtual ReadOnlySpan<byte> AsReadOnlySpan() => new ReadOnlySpan<byte>(Data);
 
         /// <summary>
         /// Returns a span over a specific row of pixel data.
         /// </summary>
-        public Span<byte> GetRowSpan(int y)
+        public virtual Span<byte> GetRowSpan(int y)
         {
             if (y < 0 || y >= Height) throw new ArgumentOutOfRangeException(nameof(y));
             int rowBytes = (PixelFormat == VideoPixelFormat.Nv12 || PixelFormat == VideoPixelFormat.Yuv420p)

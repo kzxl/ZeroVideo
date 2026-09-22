@@ -343,7 +343,7 @@ namespace ZeroVideo.Tests
         public void VideoFramePool_RentAndRecycle_WorksCorrectly()
         {
             var pool = VideoFramePool.Shared;
-            PooledVideoFrameBuffer frame;
+            VideoFrameBuffer frame;
 
             using (frame = pool.Rent(640, 480, VideoPixelFormat.Rgb24, timestampNs: 500_000, frameIndex: 1))
             {
@@ -358,12 +358,12 @@ namespace ZeroVideo.Tests
                 var span = frame.AsSpan();
                 Assert.True(span.Length >= 640 * 480 * 3);
                 span[0] = 123;
-                Assert.Equal(123, frame.Data[0]);
+                Assert.Equal(123, frame.AsSpan()[0]);
 
                 var rowSpan = frame.GetRowSpan(10);
                 Assert.Equal(640 * 3, rowSpan.Length);
                 rowSpan[0] = 200;
-                Assert.Equal(200, frame.Data[10 * frame.Stride]);
+                Assert.Equal(200, frame.AsSpan()[10 * frame.Stride]);
             }
 
             Assert.True(frame.IsDisposed);

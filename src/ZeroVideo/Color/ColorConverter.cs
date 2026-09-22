@@ -38,8 +38,9 @@ namespace ZeroVideo.Color
             int uPlaneSize = uvStride * uvHeight;
             int vPlaneOffset = yPlaneSize + uPlaneSize;
 
-            byte[] s = src.Data;
-            byte[] d = dst.Data;
+
+            ReadOnlySpan<byte> s = src.AsReadOnlySpan();
+            Span<byte> d = dst.AsSpan();
 
             for (int y = 0; y < h; y++)
             {
@@ -134,8 +135,10 @@ namespace ZeroVideo.Color
             int h = src.Height;
 
             int uvOffset = src.Stride * h;
-            byte[] s = src.Data;
-            byte[] d = dst.Data;
+
+
+            ReadOnlySpan<byte> s = src.AsReadOnlySpan();
+            Span<byte> d = dst.AsSpan();
 
             for (int y = 0; y < h; y++)
             {
