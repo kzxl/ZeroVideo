@@ -6,7 +6,7 @@ namespace ZeroVideo.Core
     /// High-performance, low-latency video frame buffer for GigE Vision, USB3 Vision, IP RTSP streams, and media playback.
     /// Supports zero-copy memory wrapping, format metadata, strided alignment, and sub-nanosecond timestamping.
     /// </summary>
-    public class VideoFrameBuffer
+    public class VideoFrameBuffer : IDisposable
     {
         public int Width { get; }
         public int Height { get; }
@@ -29,6 +29,9 @@ namespace ZeroVideo.Core
         /// <summary>Raw pixel data byte buffer.</summary>
         public byte[] Data { get; }
 
+        /// <summary>Whether this frame buffer has been disposed or returned to pool.</summary>
+        public virtual bool IsDisposed => false;
+
         public VideoFrameBuffer(int width, int height, VideoPixelFormat pixelFormat, int stride = 0)
         {
             if (width <= 0) throw new ArgumentOutOfRangeException(nameof(width), "Width must be positive.");
@@ -44,11 +47,7 @@ namespace ZeroVideo.Core
                 : width * bytesPerPixel;
 
             Stride = (stride >= minStride) ? stride : minStride;
-
-            int totalBytes = (pixelFormat == VideoPixelFormat.Nv12 || pixelFormat == VideoPixelFormat.Yuv420p)
-                ? Stride * height * 3 / 2
-                : Stride * height;
-
+            int totalBytes = CalculateTotalBytes(width, height, pixelFormat, Stride);
             Data = new byte[totalBytes];
         }
 
@@ -70,6 +69,31 @@ namespace ZeroVideo.Core
             Data = existingData ?? throw new ArgumentNullException(nameof(existingData));
         }
 
+        /// <summary>
+        /// Calculates the required total byte size for a frame buffer given its geometry and format.
+        /// </summary>
+        public static int CalculateTotalBytes(int width, int height, VideoPixelFormat pixelFormat, int stride = 0)
+        {
+            int bytesPerPixel = GetBytesPerPixel(pixelFormat);
+            int minStride = (pixelFormat == VideoPixelFormat.Nv12 || pixelFormat == VideoPixelFormat.Yuv420p)
+                ? width
+                : width * bytesPerPixel;
+
+            int actualStride = (stride >= minStride) ? stride : minStride;
+            if (pixelFormat == VideoPixelFormat.Nv12)
+            {
+                int uvHeight = (height + 1) / 2;
+                return actualStride * height + actualStride * uvHeight;
+            }
+            if (pixelFormat == VideoPixelFormat.Yuv420p)
+            {
+                int uvHeight = (height + 1) / 2;
+                int uvStride = (actualStride + 1) / 2;
+                return actualStride * height + (uvStride * uvHeight * 2);
+            }
+            return actualStride * height;
+        }
+
         public static int GetBytesPerPixel(VideoPixelFormat format)
         {
             switch (format)
@@ -83,6 +107,28 @@ namespace ZeroVideo.Core
                 case VideoPixelFormat.Yuv420p: return 1; // 1.5 effective bytes per pixel
                 default: return 1;
             }
+        }
+
+        /// <summary>
+        /// Returns a span over the active pixel data buffer.
+        /// </summary>
+        public Span<byte> AsSpan() => new Span<byte>(Data);
+
+        /// <summary>
+        /// Returns a read-only span over the active pixel data buffer.
+        /// </summary>
+        public ReadOnlySpan<byte> AsReadOnlySpan() => new ReadOnlySpan<byte>(Data);
+
+        /// <summary>
+        /// Returns a span over a specific row of pixel data.
+        /// </summary>
+        public Span<byte> GetRowSpan(int y)
+        {
+            if (y < 0 || y >= Height) throw new ArgumentOutOfRangeException(nameof(y));
+            int rowBytes = (PixelFormat == VideoPixelFormat.Nv12 || PixelFormat == VideoPixelFormat.Yuv420p)
+                ? Width
+                : Width * GetBytesPerPixel(PixelFormat);
+            return new Span<byte>(Data, y * Stride, rowBytes);
         }
 
         /// <summary>
@@ -144,6 +190,11 @@ namespace ZeroVideo.Core
                 default:
                     return 0f;
             }
+        }
+
+        public virtual void Dispose()
+        {
+            // Base implementation has nothing unmanaged to dispose
         }
     }
 }

@@ -12,10 +12,13 @@ Part of the **ZeroUniverse / ZeroPlatform** ecosystem.
 
 ## Key Features
 
+- **Zero-LOH Frame Memory Pool (`VideoFramePool`, `PooledVideoFrameBuffer`)**:
+  - High-throughput buffer pooling using `ArrayPool<byte>.Shared` to eliminate Large Object Heap (LOH) GC pauses during continuous high-FPS streaming.
+  - Implements `IDisposable` with zero-allocation span accessors (`AsSpan`, `AsReadOnlySpan`, `GetRowSpan`).
 - **Industrial Motion JPEG Multipart Client (`MjpegClient`)**:
   - Ingests standard `multipart/x-mixed-replace` HTTP video streams from industrial IP cameras (Basler, FLIR, Axis, Hikvision, ESP32-CAM, OctoPrint) with zero external libraries.
-  - Automatic boundary parsing with fault-tolerant JPEG SOI (`0xFF, 0xD8`) and EOI (`0xFF, 0xD9`) marker search.
-  - Asynchronous event-driven frame dispatching (`FrameReceived`).
+  - Non-blocking asynchronous reading loop (`ReadAsync`) with fault-tolerant JPEG SOI (`0xFF, 0xD8`) and EOI (`0xFF, 0xD9`) marker search.
+  - Event-driven frame dispatching (`FrameReceived`).
 - **Lossless Snapshot BMP Exporter (`SnapshotExporter`)**:
   - Pure C# Windows Bitmap (.bmp) generator without GDI+ or `System.Drawing` dependencies.
   - Full support for 8-bit Gray8 (with 256-color grayscale palette), 24-bit BGR/RGB, 32-bit BGRA/RGBA, and planar YUV420P/NV12.
@@ -27,12 +30,14 @@ Part of the **ZeroUniverse / ZeroPlatform** ecosystem.
   - Fast binary packet header parsing and serialization with SSRC and sequence number tracking.
 - **H.264 AVC NAL Unit Scanner (`H264NaluParser`)**:
   - Annex B start code detection (`0x000001` / `0x00000001`) and parameter set (SPS/PPS) extraction.
-- **RFC 6184 FU-A Reassembly (`H264FuAReassembler`)**:
-  - Seamless reassembly of fragmented NAL units across RTP packet boundaries.
+- **RFC 6184 FU-A Reassembly with Packet Loss Guard (`H264FuAReassembler`)**:
+  - Seamless reassembly of fragmented NAL units across RTP packet boundaries using reusable assembly memory and sequence number continuity validation.
+- **H.264 SPS Bitstream Metadata Parser (`H264SpsParser`)**:
+  - Pure C# Exp-Golomb bitstream decoder extracting video dimensions (width, height), profile, and level from raw Sequence Parameter Sets without external decoders.
 - **Fixed-Point BT.601 Color Conversion (`ColorConverter`)**:
-  - Integer-scaled SIMD-friendly conversion from YUV420P and NV12 to packed RGB24 and BGR24.
-- **Master Playback Clock & Player (`VideoClock`, `VideoPlayer`)**:
-  - Drift-free PTS synchronization, variable playback rate, seeking, and forensic frame-by-frame inspection stepping.
+  - Integer-scaled conversion from YUV420P and NV12 to packed RGB24 and BGR24 with 2x horizontal chrominance reuse.
+- **Master Playback Clock & Backpressured Player (`VideoClock`, `VideoPlayer`)**:
+  - Drift-free PTS synchronization, bounded queue backpressure control (`MaxQueueCapacity`, `FrameDropStrategy.DropOldest`), variable playback rate, seeking, and forensic frame stepping.
 
 ---
 

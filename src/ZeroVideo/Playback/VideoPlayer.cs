@@ -12,7 +12,22 @@ namespace ZeroVideo.Playback
     }
 
     /// <summary>
-    /// Thread-safe video playback controller with clock synchronization and frame-by-frame stepping.
+    /// Frame dropping policy when the video queue exceeds capacity.
+    /// </summary>
+    public enum FrameDropStrategy
+    {
+        /// <summary>Drops the oldest queued frame to maintain lowest display latency (ideal for live cameras).</summary>
+        DropOldest,
+
+        /// <summary>Rejects newly incoming frames when queue is full.</summary>
+        DropNewest,
+
+        /// <summary>Does not drop; keeps queuing without limit (legacy mode).</summary>
+        Unbounded
+    }
+
+    /// <summary>
+    /// Thread-safe video playback controller with clock synchronization, bounded buffer backpressure, and frame stepping.
     /// Ideal for both continuous camera stream display and forensic inspection review.
     /// </summary>
     public class VideoPlayer
@@ -21,22 +36,78 @@ namespace ZeroVideo.Playback
         private readonly object _lock = new object();
         private PlaybackState _state = PlaybackState.Stopped;
         private VideoFrameBuffer? _currentFrame;
+        private int _maxQueueCapacity = 30;
+        private FrameDropStrategy _dropStrategy = FrameDropStrategy.DropOldest;
+        private long _droppedFramesCount;
 
         public VideoClock Clock { get; } = new VideoClock();
         public PlaybackState State => _state;
         public VideoFrameBuffer? CurrentFrame => _currentFrame;
         public int QueueCount { get { lock (_lock) return _frameQueue.Count; } }
 
+        /// <summary>Maximum queued frames allowed before applying the drop strategy (default 30).</summary>
+        public int MaxQueueCapacity
+        {
+            get => _maxQueueCapacity;
+            set
+            {
+                if (value <= 0) throw new ArgumentOutOfRangeException(nameof(value), "MaxQueueCapacity must be positive.");
+                _maxQueueCapacity = value;
+            }
+        }
+
+        /// <summary>Active frame drop policy when capacity is reached.</summary>
+        public FrameDropStrategy DropStrategy
+        {
+            get => _dropStrategy;
+            set => _dropStrategy = value;
+        }
+
+        /// <summary>Total frames dropped due to queue saturation.</summary>
+        public long DroppedFramesCount => _droppedFramesCount;
+
         public event EventHandler<VideoFrameBuffer>? FrameReady;
         public event EventHandler<PlaybackState>? StateChanged;
+        public event EventHandler<VideoFrameBuffer>? FrameDropped;
 
-        public void EnqueueFrame(VideoFrameBuffer frame)
+        /// <summary>
+        /// Enqueues a video frame. Returns true if queued, or false if dropped due to capacity backpressure.
+        /// </summary>
+        public bool EnqueueFrame(VideoFrameBuffer frame)
         {
             if (frame == null) throw new ArgumentNullException(nameof(frame));
+            VideoFrameBuffer? dropped = null;
+
             lock (_lock)
             {
-                _frameQueue.Enqueue(frame);
+                if (_dropStrategy != FrameDropStrategy.Unbounded && _frameQueue.Count >= _maxQueueCapacity)
+                {
+                    if (_dropStrategy == FrameDropStrategy.DropNewest)
+                    {
+                        _droppedFramesCount++;
+                        dropped = frame;
+                    }
+                    else if (_dropStrategy == FrameDropStrategy.DropOldest)
+                    {
+                        _droppedFramesCount++;
+                        dropped = _frameQueue.Dequeue();
+                        _frameQueue.Enqueue(frame);
+                    }
+                }
+                else
+                {
+                    _frameQueue.Enqueue(frame);
+                }
             }
+
+            if (dropped != null)
+            {
+                FrameDropped?.Invoke(this, dropped);
+                dropped.Dispose();
+                return false;
+            }
+
+            return true;
         }
 
         public void Play()
@@ -76,7 +147,11 @@ namespace ZeroVideo.Playback
             lock (_lock)
             {
                 Clock.Stop();
-                _frameQueue.Clear();
+                while (_frameQueue.Count > 0)
+                {
+                    var f = _frameQueue.Dequeue();
+                    f.Dispose();
+                }
                 _state = PlaybackState.Stopped;
                 StateChanged?.Invoke(this, _state);
             }

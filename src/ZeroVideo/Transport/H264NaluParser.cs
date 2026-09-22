@@ -162,27 +162,62 @@ namespace ZeroVideo.Transport
 
     /// <summary>
     /// Reassembles RFC 6184 Fragmentation Unit A (FU-A) packets transmitted over RTP into a single complete NALU.
+    /// Supports RTP sequence number continuity verification and zero-allocation reusable assembly buffering.
     /// </summary>
     public class H264FuAReassembler
     {
-        private MemoryStream? _buffer;
+        private byte[] _reassemblyBuffer = new byte[65536];
+        private int _assembledLength = 0;
         private byte _naluHeader;
         private bool _isAssembling;
+        private int _lastSequenceNumber = -1;
 
         public bool IsAssembling => _isAssembling;
+        public int AssembledBytesCount => _assembledLength;
 
         public void Reset()
         {
-            _buffer?.Dispose();
-            _buffer = null;
+            _assembledLength = 0;
             _isAssembling = false;
+            _lastSequenceNumber = -1;
+        }
+
+        private void EnsureCapacity(int needed)
+        {
+            if (_assembledLength + needed > _reassemblyBuffer.Length)
+            {
+                int newCap = Math.Max(_reassemblyBuffer.Length * 2, _assembledLength + needed);
+                Array.Resize(ref _reassemblyBuffer, newCap);
+            }
         }
 
         /// <summary>
-        /// Processes an RTP payload containing FU-A or single NAL unit.
-        /// Returns a complete reassembled NALU if ready, or null if awaiting more fragments.
+        /// Processes a full RTP packet containing FU-A fragments or single NAL unit with sequence checking.
+        /// </summary>
+        public H264Nalu? ProcessRtpPacket(RtpPacket packet)
+        {
+            if (packet == null) throw new ArgumentNullException(nameof(packet));
+            return ProcessRtpPayload(packet.Payload, packet.SequenceNumber);
+        }
+
+        /// <summary>
+        /// Processes an RTP payload containing FU-A or single NAL unit with sequence number continuity check.
+        /// If a sequence gap is detected while assembling, the incomplete NAL unit is aborted and dropped.
+        /// </summary>
+        public H264Nalu? ProcessRtpPayload(byte[] payload, ushort sequenceNumber)
+        {
+            return ProcessInternal(payload, (int)sequenceNumber);
+        }
+
+        /// <summary>
+        /// Processes an RTP payload containing FU-A or single NAL unit without sequence continuity checking.
         /// </summary>
         public H264Nalu? ProcessRtpPayload(byte[] payload)
+        {
+            return ProcessInternal(payload, -1);
+        }
+
+        private H264Nalu? ProcessInternal(byte[] payload, int sequenceNumber)
         {
             if (payload == null || payload.Length < 2) return null;
 
@@ -196,26 +231,46 @@ namespace ZeroVideo.Transport
                 bool end = (fuHeader & 0x40) != 0;
                 NaluType originalType = (NaluType)(fuHeader & 0x1F);
                 byte refIdc = (byte)((indicator >> 5) & 0x03);
+                int chunkLen = payload.Length - 2;
 
                 if (start)
                 {
                     _naluHeader = (byte)(((refIdc & 0x03) << 5) | ((byte)originalType & 0x1F));
-                    _buffer?.Dispose();
-                    _buffer = new MemoryStream();
-                    _buffer.Write(payload, 2, payload.Length - 2);
+                    _assembledLength = 0;
+                    EnsureCapacity(chunkLen);
+                    Buffer.BlockCopy(payload, 2, _reassemblyBuffer, 0, chunkLen);
+                    _assembledLength = chunkLen;
                     _isAssembling = true;
+                    _lastSequenceNumber = sequenceNumber;
                     return null;
                 }
-                else if (_isAssembling && _buffer != null)
+                else if (_isAssembling)
                 {
-                    _buffer.Write(payload, 2, payload.Length - 2);
+                    // If sequence number checking is active, verify continuity
+                    if (sequenceNumber >= 0 && _lastSequenceNumber >= 0)
+                    {
+                        ushort expectedSeq = (ushort)(_lastSequenceNumber + 1);
+                        if ((ushort)sequenceNumber != expectedSeq)
+                        {
+                            // Packet loss or out-of-order packet detected! Abort incomplete fragment
+                            Reset();
+                            return null;
+                        }
+                        _lastSequenceNumber = sequenceNumber;
+                    }
+
+                    EnsureCapacity(chunkLen);
+                    Buffer.BlockCopy(payload, 2, _reassemblyBuffer, _assembledLength, chunkLen);
+                    _assembledLength += chunkLen;
 
                     if (end)
                     {
-                        byte[] reassembledPayload = _buffer.ToArray();
-                        _buffer.Dispose();
-                        _buffer = null;
+                        byte[] reassembledPayload = new byte[_assembledLength];
+                        Buffer.BlockCopy(_reassemblyBuffer, 0, reassembledPayload, 0, _assembledLength);
+
+                        _assembledLength = 0;
                         _isAssembling = false;
+                        _lastSequenceNumber = -1;
 
                         return new H264Nalu(_naluHeader, reassembledPayload);
                     }

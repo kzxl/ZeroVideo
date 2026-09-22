@@ -1,4 +1,5 @@
 using System;
+using System.Runtime.CompilerServices;
 using ZeroVideo.Core;
 
 namespace ZeroVideo.Color
@@ -9,6 +10,7 @@ namespace ZeroVideo.Color
     /// </summary>
     public static class ColorConverter
     {
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private static byte Clamp(int val)
         {
             if (val < 0) return 0;
@@ -29,14 +31,15 @@ namespace ZeroVideo.Color
             int w = src.Width;
             int h = src.Height;
 
+            int uvHeight = (h + 1) / 2;
+            int uvStride = (src.Stride + 1) / 2;
             int yPlaneSize = src.Stride * h;
             int uPlaneOffset = yPlaneSize;
-            int vPlaneOffset = yPlaneSize + (yPlaneSize / 4);
+            int uPlaneSize = uvStride * uvHeight;
+            int vPlaneOffset = yPlaneSize + uPlaneSize;
 
             byte[] s = src.Data;
             byte[] d = dst.Data;
-
-            int uvStride = src.Stride / 2;
 
             for (int y = 0; y < h; y++)
             {
@@ -44,16 +47,58 @@ namespace ZeroVideo.Color
                 int uvRow = (y / 2) * uvStride;
                 int dRow = y * dst.Stride;
 
-                for (int x = 0; x < w; x++)
+                int x = 0;
+                int wPairs = w - (w & 1); // Process pairs of pixels sharing UV
+                for (; x < wPairs; x += 2)
+                {
+                    int uVal = s[uPlaneOffset + uvRow + (x >> 1)] - 128;
+                    int vVal = s[vPlaneOffset + uvRow + (x >> 1)] - 128;
+
+                    // Fixed-point BT.601 chroma deltas (computed once per pixel pair)
+                    int cR = (359 * vVal) >> 8;
+                    int cG = (88 * uVal + 183 * vVal) >> 8;
+                    int cB = (454 * uVal) >> 8;
+
+                    // Pixel 1
+                    int yVal1 = s[yRow + x];
+                    int dstIdx1 = dRow + (x * 3);
+                    if (isBgr)
+                    {
+                        d[dstIdx1] = Clamp(yVal1 + cB);
+                        d[dstIdx1 + 1] = Clamp(yVal1 - cG);
+                        d[dstIdx1 + 2] = Clamp(yVal1 + cR);
+                    }
+                    else
+                    {
+                        d[dstIdx1] = Clamp(yVal1 + cR);
+                        d[dstIdx1 + 1] = Clamp(yVal1 - cG);
+                        d[dstIdx1 + 2] = Clamp(yVal1 + cB);
+                    }
+
+                    // Pixel 2
+                    int yVal2 = s[yRow + x + 1];
+                    int dstIdx2 = dstIdx1 + 3;
+                    if (isBgr)
+                    {
+                        d[dstIdx2] = Clamp(yVal2 + cB);
+                        d[dstIdx2 + 1] = Clamp(yVal2 - cG);
+                        d[dstIdx2 + 2] = Clamp(yVal2 + cR);
+                    }
+                    else
+                    {
+                        d[dstIdx2] = Clamp(yVal2 + cR);
+                        d[dstIdx2 + 1] = Clamp(yVal2 - cG);
+                        d[dstIdx2 + 2] = Clamp(yVal2 + cB);
+                    }
+                }
+
+                // Trailing odd pixel if width is odd
+                for (; x < w; x++)
                 {
                     int yVal = s[yRow + x];
-                    int uVal = s[uPlaneOffset + uvRow + (x / 2)] - 128;
-                    int vVal = s[vPlaneOffset + uvRow + (x / 2)] - 128;
+                    int uVal = s[uPlaneOffset + uvRow + (x >> 1)] - 128;
+                    int vVal = s[vPlaneOffset + uvRow + (x >> 1)] - 128;
 
-                    // Fixed-point BT.601:
-                    // R = Y + 1.402 * V
-                    // G = Y - 0.344136 * U - 0.714136 * V
-                    // B = Y + 1.772 * U
                     int r = yVal + ((359 * vVal) >> 8);
                     int g = yVal - ((88 * uVal + 183 * vVal) >> 8);
                     int b = yVal + ((454 * uVal) >> 8);
@@ -98,10 +143,56 @@ namespace ZeroVideo.Color
                 int uvRow = uvOffset + (y / 2) * src.Stride;
                 int dRow = y * dst.Stride;
 
-                for (int x = 0; x < w; x++)
+                int x = 0;
+                int wPairs = w - (w & 1);
+                for (; x < wPairs; x += 2)
+                {
+                    int uvIdx = uvRow + x;
+                    int uVal = s[uvIdx] - 128;
+                    int vVal = s[uvIdx + 1] - 128;
+
+                    int cR = (359 * vVal) >> 8;
+                    int cG = (88 * uVal + 183 * vVal) >> 8;
+                    int cB = (454 * uVal) >> 8;
+
+                    // Pixel 1
+                    int yVal1 = s[yRow + x];
+                    int dstIdx1 = dRow + (x * 3);
+                    if (isBgr)
+                    {
+                        d[dstIdx1] = Clamp(yVal1 + cB);
+                        d[dstIdx1 + 1] = Clamp(yVal1 - cG);
+                        d[dstIdx1 + 2] = Clamp(yVal1 + cR);
+                    }
+                    else
+                    {
+                        d[dstIdx1] = Clamp(yVal1 + cR);
+                        d[dstIdx1 + 1] = Clamp(yVal1 - cG);
+                        d[dstIdx1 + 2] = Clamp(yVal1 + cB);
+                    }
+
+                    // Pixel 2
+                    int yVal2 = s[yRow + x + 1];
+                    int dstIdx2 = dstIdx1 + 3;
+                    if (isBgr)
+                    {
+                        d[dstIdx2] = Clamp(yVal2 + cB);
+                        d[dstIdx2 + 1] = Clamp(yVal2 - cG);
+                        d[dstIdx2 + 2] = Clamp(yVal2 + cR);
+                    }
+                    else
+                    {
+                        d[dstIdx2] = Clamp(yVal2 + cR);
+                        d[dstIdx2 + 1] = Clamp(yVal2 - cG);
+                        d[dstIdx2 + 2] = Clamp(yVal2 + cB);
+                    }
+                }
+
+                // Trailing odd pixel if width is odd
+                for (; x < w; x++)
                 {
                     int yVal = s[yRow + x];
-                    int uvIdx = uvRow + ((x / 2) * 2);
+                    int uvIdx = uvRow + ((x >> 1) << 1);
                     int uVal = s[uvIdx] - 128;
                     int vVal = s[uvIdx + 1] - 128;
 

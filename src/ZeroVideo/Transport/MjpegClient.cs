@@ -69,7 +69,7 @@ namespace ZeroVideo.Transport
             _cts = new CancellationTokenSource();
             var token = _cts.Token;
 
-            _readTask = Task.Run(() => ProcessStreamLoop(stream, token), token);
+            _readTask = Task.Run(() => ProcessStreamLoopAsync(stream, token), token);
         }
 
         /// <summary>
@@ -83,7 +83,7 @@ namespace ZeroVideo.Transport
             }
         }
 
-        private void ProcessStreamLoop(Stream stream, CancellationToken token)
+        private async Task ProcessStreamLoopAsync(Stream stream, CancellationToken token)
         {
             byte[] readChunk = new byte[16384];
             using (var memoryBuffer = new MemoryStream())
@@ -92,7 +92,7 @@ namespace ZeroVideo.Transport
                 {
                     while (!token.IsCancellationRequested)
                     {
-                        int bytesRead = stream.Read(readChunk, 0, readChunk.Length);
+                        int bytesRead = await stream.ReadAsync(readChunk, 0, readChunk.Length, token).ConfigureAwait(false);
                         if (bytesRead <= 0)
                         {
                             break; // Stream ended or closed

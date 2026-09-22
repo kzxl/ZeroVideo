@@ -338,5 +338,188 @@ namespace ZeroVideo.Tests
                 Assert.Equal(2, client.TotalFramesReceived);
             }
         }
+
+        [Fact]
+        public void VideoFramePool_RentAndRecycle_WorksCorrectly()
+        {
+            var pool = VideoFramePool.Shared;
+            PooledVideoFrameBuffer frame;
+
+            using (frame = pool.Rent(640, 480, VideoPixelFormat.Rgb24, timestampNs: 500_000, frameIndex: 1))
+            {
+                Assert.False(frame.IsDisposed);
+                Assert.Equal(640, frame.Width);
+                Assert.Equal(480, frame.Height);
+                Assert.Equal(640 * 3, frame.Stride);
+                Assert.Equal(500_000, frame.TimestampNs);
+                Assert.Equal(1, frame.FrameIndex);
+
+                // Span access
+                var span = frame.AsSpan();
+                Assert.True(span.Length >= 640 * 480 * 3);
+                span[0] = 123;
+                Assert.Equal(123, frame.Data[0]);
+
+                var rowSpan = frame.GetRowSpan(10);
+                Assert.Equal(640 * 3, rowSpan.Length);
+                rowSpan[0] = 200;
+                Assert.Equal(200, frame.Data[10 * frame.Stride]);
+            }
+
+            Assert.True(frame.IsDisposed);
+
+            // Rent again: should succeed and return a valid clean buffer
+            using (var frame2 = pool.Rent(320, 240, VideoPixelFormat.Gray8))
+            {
+                Assert.False(frame2.IsDisposed);
+                Assert.Equal(320, frame2.Width);
+                Assert.Equal(240, frame2.Height);
+            }
+        }
+
+        [Fact]
+        public void VideoPlayer_BoundedBackpressure_DropsOldestAndNewest()
+        {
+            var player = new VideoPlayer();
+            player.MaxQueueCapacity = 2;
+
+            // 1. DropOldest Strategy
+            player.DropStrategy = FrameDropStrategy.DropOldest;
+            var pool = VideoFramePool.Shared;
+
+            var f1 = pool.Rent(10, 10, VideoPixelFormat.Gray8, 0, 1);
+            var f2 = pool.Rent(10, 10, VideoPixelFormat.Gray8, 0, 2);
+            var f3 = pool.Rent(10, 10, VideoPixelFormat.Gray8, 0, 3);
+
+            VideoFrameBuffer? droppedFrame = null;
+            player.FrameDropped += (s, e) => droppedFrame = e;
+
+            Assert.True(player.EnqueueFrame(f1));
+            Assert.True(player.EnqueueFrame(f2));
+            Assert.False(player.EnqueueFrame(f3)); // Capacity reached: f1 dropped
+
+            Assert.Equal(2, player.QueueCount);
+            Assert.Equal(1, player.DroppedFramesCount);
+            Assert.Same(f1, droppedFrame);
+            Assert.True(f1.IsDisposed); // Dropped pooled frame is automatically disposed
+
+            // Queue should now contain f2 and f3
+            player.StepNextFrame();
+            Assert.Same(f2, player.CurrentFrame);
+            player.StepNextFrame();
+            Assert.Same(f3, player.CurrentFrame);
+
+            // Clean up
+            f2.Dispose();
+            f3.Dispose();
+
+            // 2. DropNewest Strategy
+            player.Stop();
+            player.MaxQueueCapacity = 2;
+            player.DropStrategy = FrameDropStrategy.DropNewest;
+
+            var fA = pool.Rent(10, 10, VideoPixelFormat.Gray8, 0, 10);
+            var fB = pool.Rent(10, 10, VideoPixelFormat.Gray8, 0, 20);
+            var fC = pool.Rent(10, 10, VideoPixelFormat.Gray8, 0, 30);
+
+            Assert.True(player.EnqueueFrame(fA));
+            Assert.True(player.EnqueueFrame(fB));
+            Assert.False(player.EnqueueFrame(fC)); // Capacity reached: fC rejected
+
+            Assert.Equal(2, player.QueueCount);
+            Assert.Equal(2, player.DroppedFramesCount);
+            Assert.True(fC.IsDisposed);
+
+            player.Stop();
+            Assert.True(fA.IsDisposed);
+            Assert.True(fB.IsDisposed);
+        }
+
+        [Fact]
+        public void H264FuAReassembler_SequenceGapDetection_AbortsCorruptedNALU()
+        {
+            var reassembler = new H264FuAReassembler();
+
+            byte fuIndicator = (byte)((1 << 5) | 28); // RefIdc=1, Type=FuA
+            byte fuStart = (byte)(0x80 | 5);          // Start, Type=IDR
+            byte fuMid = (byte)(5);                   // Middle
+            byte fuEnd = (byte)(0x40 | 5);            // End
+
+            byte[] chunk1 = new byte[] { fuIndicator, fuStart, 1, 2, 3 };
+            byte[] chunk2 = new byte[] { fuIndicator, fuMid, 4, 5, 6 };
+            byte[] chunk3 = new byte[] { fuIndicator, fuEnd, 7, 8, 9 };
+
+            // Scenario 1: Missing packet between seq 100 and seq 102
+            var nalu1 = reassembler.ProcessRtpPayload(chunk1, 100);
+            Assert.Null(nalu1);
+            Assert.True(reassembler.IsAssembling);
+
+            // Jump sequence from 100 -> 102 (Packet 101 was lost!)
+            var nalu2 = reassembler.ProcessRtpPayload(chunk2, 102);
+            Assert.Null(nalu2);
+            Assert.False(reassembler.IsAssembling); // Aborted!
+
+            // Subsequent end packet should not return anything
+            var nalu3 = reassembler.ProcessRtpPayload(chunk3, 103);
+            Assert.Null(nalu3);
+
+            // Scenario 2: Valid continuous sequence
+            reassembler.Reset();
+            reassembler.ProcessRtpPayload(chunk1, 200);
+            reassembler.ProcessRtpPayload(chunk2, 201);
+            var completed = reassembler.ProcessRtpPayload(chunk3, 202);
+
+            Assert.NotNull(completed);
+            Assert.Equal(NaluType.IdrSlice, completed.Type);
+            Assert.Equal(9, completed.Payload.Length);
+            Assert.Equal(new byte[] { 1, 2, 3, 4, 5, 6, 7, 8, 9 }, completed.Payload);
+        }
+
+        [Fact]
+        public void H264SpsParser_ExtractsResolutionAndProfile()
+        {
+            // 640x480 Baseline SPS test bitstream:
+            // Profile: 66 (0x42), Level: 30 (0x1E), Width: 640, Height: 480
+            byte[] spsPayload = new byte[] { 0x67, 0x42, 0x00, 0x1E, 0xF4, 0x05, 0x01, 0xED };
+
+            var info = H264SpsParser.Parse(spsPayload);
+            Assert.NotNull(info);
+            Assert.Equal(66, info.ProfileIdc);
+            Assert.Equal(30, info.LevelIdc);
+            Assert.Equal(640, info.Width);
+            Assert.Equal(480, info.Height);
+            Assert.True(info.FrameMbsOnlyFlag);
+
+            // Test with 4-byte start code prefix
+            byte[] annexB = new byte[] { 0x00, 0x00, 0x00, 0x01, 0x67, 0x42, 0x00, 0x1E, 0xF4, 0x05, 0x01, 0xED };
+            var infoAnnexB = H264SpsParser.Parse(annexB);
+            Assert.NotNull(infoAnnexB);
+            Assert.Equal(640, infoAnnexB.Width);
+            Assert.Equal(480, infoAnnexB.Height);
+        }
+
+        [Fact]
+        public void ColorConverter_ChromaPairOptimization_OddAndEvenWidths()
+        {
+            // Test odd dimensions (15x15) to verify both paired and trailing odd pixel logic
+            int w = 15, h = 15;
+            var yuv = new VideoFrameBuffer(w, h, VideoPixelFormat.Yuv420p);
+            var rgb = new VideoFrameBuffer(w, h, VideoPixelFormat.Rgb24);
+
+            int yPlaneSize = yuv.Stride * h;
+            for (int i = 0; i < yPlaneSize; i++) yuv.Data[i] = 200;
+            for (int i = yPlaneSize; i < yuv.Data.Length; i++) yuv.Data[i] = 128;
+
+            ColorConverter.Yuv420pToRgb(yuv, rgb);
+
+            // Every pixel (including trailing odd pixel at x=14) should be 200
+            for (int x = 0; x < w; x++)
+            {
+                int offset = x * 3;
+                Assert.Equal(200, rgb.Data[offset]);
+                Assert.Equal(200, rgb.Data[offset + 1]);
+                Assert.Equal(200, rgb.Data[offset + 2]);
+            }
+        }
     }
 }
