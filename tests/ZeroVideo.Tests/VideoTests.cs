@@ -232,5 +232,111 @@ namespace ZeroVideo.Tests
             Assert.Equal(PlaybackState.Stopped, player.State);
             Assert.Equal(0, player.QueueCount);
         }
+
+        [Fact]
+        public void SnapshotExporter_BmpGeneration_CreatesValidBmpHeaderAndPayload()
+        {
+            // 1. Test 24-bit BGR export
+            var bgrFrame = new VideoFrameBuffer(64, 48, VideoPixelFormat.Bgr24);
+            // Fill with a distinct test color
+            bgrFrame.Data[0] = 10;  // B
+            bgrFrame.Data[1] = 20;  // G
+            bgrFrame.Data[2] = 30;  // R
+
+            byte[] bmpBytes = SnapshotExporter.ExportToBmpBytes(bgrFrame);
+            Assert.NotNull(bmpBytes);
+            Assert.True(bmpBytes.Length > 54);
+
+            // Verify BITMAPFILEHEADER
+            Assert.Equal((byte)'B', bmpBytes[0]);
+            Assert.Equal((byte)'M', bmpBytes[1]);
+            uint reportedFileSize = BitConverter.ToUInt32(bmpBytes, 2);
+            Assert.Equal((uint)bmpBytes.Length, reportedFileSize);
+            uint dataOffset = BitConverter.ToUInt32(bmpBytes, 10);
+            Assert.Equal(54u, dataOffset); // 14 file header + 40 info header
+
+            // Verify BITMAPINFOHEADER
+            uint headerSize = BitConverter.ToUInt32(bmpBytes, 14);
+            Assert.Equal(40u, headerSize);
+            int width = BitConverter.ToInt32(bmpBytes, 18);
+            Assert.Equal(64, width);
+            int height = BitConverter.ToInt32(bmpBytes, 22);
+            Assert.Equal(48, height);
+            ushort planes = BitConverter.ToUInt16(bmpBytes, 26);
+            Assert.Equal((ushort)1, planes);
+            ushort bitCount = BitConverter.ToUInt16(bmpBytes, 28);
+            Assert.Equal((ushort)24, bitCount);
+
+            // 2. Test 8-bit Gray8 export with palette
+            var grayFrame = new VideoFrameBuffer(32, 24, VideoPixelFormat.Gray8);
+            grayFrame.Data[0] = 128;
+
+            byte[] grayBmp = SnapshotExporter.ExportToBmpBytes(grayFrame);
+            Assert.Equal((byte)'B', grayBmp[0]);
+            Assert.Equal((byte)'M', grayBmp[1]);
+            uint grayOffset = BitConverter.ToUInt32(grayBmp, 10);
+            Assert.Equal(1078u, grayOffset); // 14 + 40 + (256 * 4) = 1078
+            ushort grayBits = BitConverter.ToUInt16(grayBmp, 28);
+            Assert.Equal((ushort)8, grayBits);
+        }
+
+        [Fact]
+        public void MjpegClient_BoundaryParsingAndMarkerExtraction_WorksCorrectly()
+        {
+            // 1. Boundary Header parsing
+            string header = "multipart/x-mixed-replace; boundary=--myboundary";
+            string? boundary = MjpegClient.ParseBoundary(header);
+            Assert.Equal("--myboundary", boundary);
+
+            string quotedHeader = "multipart/x-mixed-replace; boundary=\"frame_chunk\"";
+            Assert.Equal("frame_chunk", MjpegClient.ParseBoundary(quotedHeader));
+
+            // 2. Marker search & multi-frame extraction
+            // Construct simulated stream with 2 JPEG frames
+            var testStream = new System.IO.MemoryStream();
+            byte[] frame1 = new byte[] { 0xFF, 0xD8, 0x11, 0x22, 0x33, 0xFF, 0xD9 };
+            byte[] separator = Encoding.ASCII.GetBytes("\r\n--boundary\r\nContent-Type: image/jpeg\r\n\r\n");
+            byte[] frame2 = new byte[] { 0xFF, 0xD8, 0x44, 0x55, 0x66, 0x77, 0x88, 0xFF, 0xD9 };
+
+            testStream.Write(separator, 0, separator.Length);
+            testStream.Write(frame1, 0, frame1.Length);
+            testStream.Write(separator, 0, separator.Length);
+            testStream.Write(frame2, 0, frame2.Length);
+
+            byte[] streamBytes = testStream.ToArray();
+
+            // Extract all frames synchronously
+            var extracted = MjpegClient.ExtractAllFrames(streamBytes);
+            Assert.Equal(2, extracted.Count);
+            Assert.Equal(frame1.Length, extracted[0].Length);
+            Assert.Equal(frame2.Length, extracted[1].Length);
+            Assert.Equal(0xFF, extracted[0][0]);
+            Assert.Equal(0xD8, extracted[0][1]);
+            Assert.Equal(0xFF, extracted[0][extracted[0].Length - 2]);
+            Assert.Equal(0xD9, extracted[0][extracted[0].Length - 1]);
+
+            // 3. Streaming client event dispatch
+            using (var client = new MjpegClient())
+            {
+                var receivedFrames = new List<byte[]>();
+                client.FrameReceived += (s, e) =>
+                {
+                    lock (receivedFrames)
+                    {
+                        receivedFrames.Add(e.JpegData);
+                    }
+                };
+
+                testStream.Position = 0;
+                client.Start(testStream);
+
+                // Allow background task to process stream
+                System.Threading.Thread.Sleep(200);
+                client.Stop();
+
+                Assert.Equal(2, receivedFrames.Count);
+                Assert.Equal(2, client.TotalFramesReceived);
+            }
+        }
     }
 }
