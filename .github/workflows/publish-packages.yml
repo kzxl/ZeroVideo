@@ -22,17 +22,13 @@ jobs:
       - name: Checkout Code
         uses: actions/checkout@v4
 
-      - name: Checkout Dependencies
-        shell: pwsh
-        run: |
-          cd ..
-          if (-not (Test-Path "ZeroPrimitives")) { git clone https://github.com/kzxl/ZeroPrimitives.git }
-          cd ZeroVideo
-
       - name: Setup .NET SDK
         uses: actions/setup-dotnet@v4
         with:
           dotnet-version: '8.0.x'
+          source-url: https://nuget.pkg.github.com/kzxl/index.json
+        env:
+          NUGET_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Pack ZeroVideo
         run: dotnet pack src/ZeroVideo/ZeroVideo.csproj -c Release -o nupkgs
