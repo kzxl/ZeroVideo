@@ -10,7 +10,11 @@
     <PackageTags>video;rtsp;rtp;h264;multimedia;streaming;framebuffer;yuv</PackageTags>
   </PropertyGroup>
 
-  <ItemGroup>
+  <ItemGroup Condition="Exists('..\..\..\ZeroPrimitives\src\ZeroPrimitives.Core\ZeroPrimitives.Core.csproj')">
     <ProjectReference Include="..\..\..\ZeroPrimitives\src\ZeroPrimitives.Core\ZeroPrimitives.Core.csproj" />
+  </ItemGroup>
+
+  <ItemGroup Condition="!Exists('..\..\..\ZeroPrimitives\src\ZeroPrimitives.Core\ZeroPrimitives.Core.csproj')">
+    <PackageReference Include="ZeroPrimitives.Core" Version="1.0.0" />
   </ItemGroup>
 </Project>
