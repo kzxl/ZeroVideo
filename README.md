@@ -1,12 +1,22 @@
 # ZeroVideo: Enterprise Pure C# Video Streaming, Transport & Multimedia Engine
 
+[![ZeroPlatform Tier](https://img.shields.io/badge/ZeroPlatform-Tier%203%20(Perception%20%26%20AI)-7c3aed.svg)](https://github.com/kzxl/ZeroPlatform)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![.NET Multi-Targeting](https://img.shields.io/badge/.NET-8.0%20%7C%204.6.2%20%7C%20Standard%202.0-purple.svg)](https://dotnet.microsoft.com/)
 [![NuGet Version](https://img.shields.io/badge/NuGet-1.1.0-blue.svg)](https://www.nuget.org/packages/ZeroVideo)
 
 **ZeroVideo** is a sovereign, high-performance, pure C# video streaming, camera network transport, and multimedia playback engine for .NET. Completely free from heavyweight native C++ bindings (no FFmpeg or VLC unmanaged binaries required), it provides low-latency RTSP/RTP/H.264 stream ingestion, industrial Motion JPEG (MJPEG) streaming, lossless bitmap snapshot generation, strided multi-format video frame buffers, fast BT.601 color conversions, and clock-synchronized video playback.
 
-Part of the **ZeroUniverse / ZeroPlatform** ecosystem.
+Operating as a core member of **Tier 3 (Perception & Intelligence)** within the **[ZeroPlatform](https://github.com/kzxl/ZeroPlatform)** ecosystem.
+
+---
+
+## 🏛️ Ecosystem Architectural Alignment
+
+- **Architectural Tier**: **Tier 3 (Perception & Intelligence)**
+- **Permitted Upstream Dependencies**: Tier 0 (`ZeroPrimitives`, `ZeroConcurrency`, `ZeroSecurity`), Tier 1 (`ZeroCompute`, `ZeroTensor`), Tier 2 (`ZeroNetwork`)
+- **Downstream Consumers**: Tier 4 (`ZeroGraphics`), Tier 5 (`ZeroPipeline`, `ZeroUI`)
+- **Core Guarantees**: Pure C# execution, Zero Large Object Heap (LOH) GC allocations on hot streaming loops, zero unmanaged runtime binary dependencies.
 
 ---
 
@@ -31,11 +41,11 @@ Part of the **ZeroUniverse / ZeroPlatform** ecosystem.
 - **H.264 AVC NAL Unit Scanner (`H264NaluParser`)**:
   - Annex B start code detection (`0x000001` / `0x00000001`) and parameter set (SPS/PPS) extraction.
 - **RFC 6184 FU-A Reassembly with Packet Loss Guard (`H264FuAReassembler`)**:
-  - Seamless reassembly of fragmented NAL units across RTP packet boundaries using reusable assembly memory and sequence number continuity validation.
+  - Seamless reassembly of fragmented NAL units across RTP packet boundaries using reusable assembly memory and sequence number continuity validation to discard corrupted frames.
 - **H.264 SPS Bitstream Metadata Parser (`H264SpsParser`)**:
   - Pure C# Exp-Golomb bitstream decoder extracting video dimensions (width, height), profile, and level from raw Sequence Parameter Sets without external decoders.
 - **Fixed-Point BT.601 Color Conversion (`ColorConverter`)**:
-  - Integer-scaled conversion from YUV420P and NV12 to packed RGB24 and BGR24 with 2x horizontal chrominance reuse.
+  - Integer-scaled conversion from YUV420P and NV12 to packed RGB24 and BGR24 with 2x horizontal chrominance calculation reuse and aggressive inlining.
 - **Master Playback Clock & Backpressured Player (`VideoClock`, `VideoPlayer`)**:
   - Drift-free PTS synchronization, bounded queue backpressure control (`MaxQueueCapacity`, `FrameDropStrategy.DropOldest`), variable playback rate, seeking, and forensic frame stepping.
 
