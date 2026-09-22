@@ -6,8 +6,8 @@
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <GenerateDocumentationFile>true</GenerateDocumentationFile>
     <NoWarn>$(NoWarn);1591</NoWarn>
-    <Description>Enterprise Pure C# Video Streaming, RTSP Transport, H.264 NAL Parser &amp; Multimedia Engine for .NET.</Description>
-    <PackageTags>video;rtsp;rtp;h264;multimedia;streaming;framebuffer;yuv</PackageTags>
+    <Description>Enterprise Pure C# Video Streaming, RTSP/RTP Transport, Industrial MJPEG Multipart Client, H.264 NALU Scanner, Snapshot BMP Exporter &amp; Low-Latency Frame Buffer for .NET.</Description>
+    <PackageTags>video;streaming;rtsp;rtp;mjpeg;h264;framebuffer;yuv;bmp;snapshot;machine-vision;industrial-automation</PackageTags>
   </PropertyGroup>
 
   <ItemGroup Condition="Exists('..\..\..\ZeroPrimitives\src\ZeroPrimitives.Core\ZeroPrimitives.Core.csproj')">
