@@ -171,7 +171,7 @@ namespace ZeroVideo.Tests
         }
 
         // -------------------------------------------------------------
-        // SECTION 2: Empirical Bug Reproductions (Defect Evidence)
+        // SECTION 2: Empirical Remediations (Verification of Fixes)
         // -------------------------------------------------------------
 
         [Theory]
@@ -181,59 +181,47 @@ namespace ZeroVideo.Tests
         [InlineData(17, 9)]
         [InlineData(63, 63)]
         [InlineData(1921, 1081)]
-        public void ColorConverter_OddDimensions_Nv12_EmpiricalProof_ThrowsIndexOutOfRangeException(int w, int h)
+        public void ColorConverter_OddDimensions_Nv12_ConvertsWithoutException(int w, int h)
         {
-            // DEFECT REPRODUCTION 1:
-            // In Nv12ToRgb, when w is odd and src.Stride == w, the trailing odd pixel loop (lines 204-209)
-            // calculates uvIdx = uvRow + ((x >> 1) << 1) and accesses s[uvIdx + 1] for vVal.
-            // On the last row (y / 2 == uvHeight - 1), uvIdx + 1 equals requiredSrc, which is exactly s.Length!
-            // The runtime throws an unhandled IndexOutOfRangeException instead of ArgumentException or converting safely.
+            // REMEDIATION VERIFICATION 1:
+            // Safely guards uvIdx + 1 so odd-width NV12 frames convert cleanly without IndexOutOfRangeException.
             var nv12 = new VideoFrameBuffer(w, h, VideoPixelFormat.Nv12);
             var rgb = new VideoFrameBuffer(w, h, VideoPixelFormat.Rgb24);
 
             for (int i = 0; i < nv12.Data.Length; i++)
                 nv12.Data[i] = (byte)(i % 256);
 
-            var ex = Record.Exception(() => ColorConverter.Nv12ToRgb(nv12, rgb));
-            Assert.NotNull(ex);
-            // Empirical proof: throws unhandled IndexOutOfRangeException!
-            Assert.IsType<IndexOutOfRangeException>(ex);
+            ColorConverter.Nv12ToRgb(nv12, rgb);
+            Assert.True(rgb.Data.Length >= w * h * 3);
         }
 
         [Fact]
-        public void ColorConverter_MismatchedDimensions_RgbToGray8_EmpiricalProof_ThrowsIndexOutOfRangeException()
+        public void ColorConverter_MismatchedDimensions_RgbToGray8_ThrowsArgumentException()
         {
-            // DEFECT REPRODUCTION 2:
-            // RgbToGray8 completely omits dimension validation (src.Width != dst.Width || src.Height != dst.Height).
-            // (In contrast, Yuv420pToRgb:28-29 and Nv12ToRgb:135-136 both enforce this check).
-            // When src.Width > dst.Width (e.g., 200x10 vs 10x10), requiredDst = 10 * 10 = 100 <= dst.Data.Length.
-            // The precondition passes, enters the conversion loop, and attempts to write d[dstRow + x] where x reaches 100+,
-            // triggering an unhandled IndexOutOfRangeException instead of ArgumentException.
+            // REMEDIATION VERIFICATION 2:
+            // RgbToGray8 enforces dimension validation (src.Width == dst.Width && src.Height == dst.Height).
+            // When dimensions do not match, it throws ArgumentException instead of writing out-of-bounds.
             var rgb = new VideoFrameBuffer(200, 10, VideoPixelFormat.Rgb24);
             var gray = new VideoFrameBuffer(10, 10, VideoPixelFormat.Gray8);
 
-            var ex = Record.Exception(() => ColorConverter.RgbToGray8(rgb, gray));
-            Assert.NotNull(ex);
-            // Empirical proof: throws unhandled IndexOutOfRangeException instead of ArgumentException!
-            Assert.IsType<IndexOutOfRangeException>(ex);
+            var ex = Assert.Throws<ArgumentException>(() => ColorConverter.RgbToGray8(rgb, gray));
+            Assert.Contains("dimensions must match", ex.Message, StringComparison.OrdinalIgnoreCase);
         }
 
         [Fact]
-        public void VideoFrameBuffer_PooledBuffer_PostDisposalAccess_LacksObjectDisposedProtection()
+        public void VideoFrameBuffer_PooledBuffer_PostDisposalAccess_ThrowsObjectDisposedException()
         {
-            // DEFECT REPRODUCTION 3:
-            // PooledVideoFrameBuffer does NOT override AsSpan(), AsReadOnlySpan(), or GetRowSpan().
-            // When disposed, _rentedArray is returned to ArrayPool.Shared, but buffer.Data still references
-            // the returned array, and AsSpan() continues returning valid spans over returned pool memory!
-            // In contrast, NativeVideoFrameBuffer correctly throws ObjectDisposedException on AsSpan() after Dispose().
+            // REMEDIATION VERIFICATION 3:
+            // PooledVideoFrameBuffer overrides AsSpan(), AsReadOnlySpan(), and GetRowSpan() to throw ObjectDisposedException
+            // once disposed, preventing use-after-free vulnerabilities on returned ArrayPool memory.
             using var pool = new VideoFramePool(FramePoolBackend.ManagedArrayPool);
             var frame = pool.Rent(64, 48, VideoPixelFormat.Rgb24);
             frame.Dispose();
             Assert.True(frame.IsDisposed);
 
-            // Empirical proof: AsSpan() returns without throwing ObjectDisposedException!
-            var span = frame.AsSpan();
-            Assert.True(span.Length > 0); // Demonstrates use-after-free hazard on returned pool array
+            Assert.Throws<ObjectDisposedException>(() => frame.AsSpan());
+            Assert.Throws<ObjectDisposedException>(() => frame.AsReadOnlySpan());
+            Assert.Throws<ObjectDisposedException>(() => frame.GetRowSpan(0));
         }
 
         // -------------------------------------------------------------

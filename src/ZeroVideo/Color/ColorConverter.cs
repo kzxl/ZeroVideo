@@ -206,7 +206,7 @@ namespace ZeroVideo.Color
                     int yVal = s[yRow + x];
                     int uvIdx = uvRow + ((x >> 1) << 1);
                     int uVal = s[uvIdx] - 128;
-                    int vVal = s[uvIdx + 1] - 128;
+                    int vVal = (uvIdx + 1 < s.Length) ? (s[uvIdx + 1] - 128) : 0;
 
                     int r = yVal + ((359 * vVal) >> 8);
                     int g = yVal - ((88 * uVal + 183 * vVal) >> 8);
@@ -236,6 +236,8 @@ namespace ZeroVideo.Color
         {
             if (src == null) throw new ArgumentNullException(nameof(src));
             if (dst == null) throw new ArgumentNullException(nameof(dst));
+            if (src.Width != dst.Width || src.Height != dst.Height)
+                throw new ArgumentException("Source and destination dimensions must match.");
 
             int w = src.Width;
             int h = src.Height;

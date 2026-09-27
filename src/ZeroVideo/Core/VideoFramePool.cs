@@ -47,6 +47,27 @@ namespace ZeroVideo.Core
             _rentedArray = rentedArray ?? throw new ArgumentNullException(nameof(rentedArray));
         }
 
+        public override Span<byte> AsSpan()
+        {
+            if (_isDisposed)
+                throw new ObjectDisposedException(nameof(PooledVideoFrameBuffer));
+            return base.AsSpan();
+        }
+
+        public override ReadOnlySpan<byte> AsReadOnlySpan()
+        {
+            if (_isDisposed)
+                throw new ObjectDisposedException(nameof(PooledVideoFrameBuffer));
+            return base.AsReadOnlySpan();
+        }
+
+        public override Span<byte> GetRowSpan(int y)
+        {
+            if (_isDisposed)
+                throw new ObjectDisposedException(nameof(PooledVideoFrameBuffer));
+            return base.GetRowSpan(y);
+        }
+
         public override void Dispose()
         {
             if (!_isDisposed)
