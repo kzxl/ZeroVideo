@@ -1,5 +1,6 @@
 using System;
 using System.Buffers;
+using System.Threading;
 using ZeroPrimitives.Memory;
 
 namespace ZeroVideo.Core
@@ -133,7 +134,7 @@ namespace ZeroVideo.Core
         private readonly FramePoolBackend _backend;
         private readonly ArrayPool<byte>? _managedPool;
         private readonly SlabAllocator? _slabAllocator;
-        private bool _disposed;
+        private int _disposed;
 
         /// <summary>
         /// Global shared video frame memory pool (managed ArrayPool backend).
@@ -150,6 +151,21 @@ namespace ZeroVideo.Core
         /// Gets the allocation backend used by this pool.
         /// </summary>
         public FramePoolBackend Backend => _backend;
+
+        /// <summary>
+        /// Gets whether the pool has been disposed.
+        /// </summary>
+        public bool IsDisposed => Volatile.Read(ref _disposed) != 0;
+
+        /// <summary>
+        /// Gets the count of active blocks leased from the slab allocator, if using off-heap backend.
+        /// </summary>
+        public int ActiveBlocks => _slabAllocator?.ActiveBlocks ?? 0;
+
+        /// <summary>
+        /// Gets whether there are active unmanaged frame blocks currently rented from the slab allocator.
+        /// </summary>
+        public bool HasActiveLeases => (_slabAllocator?.ActiveBlocks ?? 0) > 0;
 
         public VideoFramePool(FramePoolBackend backend = FramePoolBackend.ManagedArrayPool, int slabSize = 4 * 1024 * 1024)
         {
@@ -175,10 +191,20 @@ namespace ZeroVideo.Core
         /// </summary>
         public VideoFrameBuffer Rent(int width, int height, VideoPixelFormat pixelFormat, int stride = 0)
         {
+            if (IsDisposed)
+                throw new ObjectDisposedException(nameof(VideoFramePool), "Cannot rent from a disposed VideoFramePool.");
+
             int totalBytes = VideoFrameBuffer.CalculateTotalBytes(width, height, pixelFormat, stride);
 
             if (_backend == FramePoolBackend.OffHeapSlab && _slabAllocator != null)
             {
+                if (totalBytes > _slabAllocator.BlockSize)
+                {
+                    // Oversize frame exceeding slab block size: fall back cleanly to unpooled native allocation
+                    NativeMemoryBlock unpooledBlock = NativeMemoryBlock.Allocate(totalBytes);
+                    return new NativeVideoFrameBuffer(width, height, pixelFormat, unpooledBlock, stride);
+                }
+
                 NativeMemoryBlock block = _slabAllocator.Rent(totalBytes);
                 return new NativeVideoFrameBuffer(width, height, pixelFormat, block, stride);
             }
@@ -204,13 +230,34 @@ namespace ZeroVideo.Core
             return buffer;
         }
 
+        /// <summary>
+        /// Performs a graceful shutdown of the pool, waiting up to the specified timeout for active frame leases to be returned before disposing.
+        /// </summary>
+        public bool WaitForShutdown(TimeSpan timeout)
+        {
+            if (_slabAllocator == null)
+            {
+                Dispose();
+                return true;
+            }
+
+            var sw = System.Diagnostics.Stopwatch.StartNew();
+            while (_slabAllocator.ActiveBlocks > 0 && sw.Elapsed < timeout)
+            {
+                Thread.Sleep(10);
+            }
+
+            bool drained = _slabAllocator.ActiveBlocks == 0;
+            Dispose();
+            return drained;
+        }
+
         public void Dispose()
         {
-            if (!_disposed)
-            {
-                _disposed = true;
-                _slabAllocator?.Dispose();
-            }
+            if (Interlocked.Exchange(ref _disposed, 1) != 0)
+                return;
+
+            _slabAllocator?.Dispose();
         }
     }
 }

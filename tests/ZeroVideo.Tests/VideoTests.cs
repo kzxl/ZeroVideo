@@ -521,5 +521,81 @@ namespace ZeroVideo.Tests
                 Assert.Equal(200, rgb.Data[offset + 2]);
             }
         }
+
+        [Fact]
+        public void ColorConverter_SpanBoundsCheck_ThrowsOnUndersizedBuffers()
+        {
+            int w = 64, h = 64;
+            var normalDst = new VideoFrameBuffer(w, h, VideoPixelFormat.Rgb24);
+
+            // Undersized source data
+            var undersizedSrc = new VideoFrameBuffer(w, h, VideoPixelFormat.Yuv420p, new byte[100]);
+            Assert.Throws<ArgumentException>(() => ColorConverter.Yuv420pToRgb(undersizedSrc, normalDst));
+
+            var normalSrcYuv = new VideoFrameBuffer(w, h, VideoPixelFormat.Yuv420p);
+            var undersizedDst = new VideoFrameBuffer(w, h, VideoPixelFormat.Rgb24, new byte[100]);
+            Assert.Throws<ArgumentException>(() => ColorConverter.Yuv420pToRgb(normalSrcYuv, undersizedDst));
+
+            var undersizedNv12 = new VideoFrameBuffer(w, h, VideoPixelFormat.Nv12, new byte[100]);
+            Assert.Throws<ArgumentException>(() => ColorConverter.Nv12ToRgb(undersizedNv12, normalDst));
+
+            var normalNv12 = new VideoFrameBuffer(w, h, VideoPixelFormat.Nv12);
+            Assert.Throws<ArgumentException>(() => ColorConverter.Nv12ToRgb(normalNv12, undersizedDst));
+
+            var undersizedGray = new VideoFrameBuffer(w, h, VideoPixelFormat.Gray8, new byte[10]);
+            Assert.Throws<ArgumentException>(() => ColorConverter.RgbToGray8(normalDst, undersizedGray));
+        }
+
+        [Fact]
+        public void VideoFramePool_OffHeapAndOversizeFallback_Succeeds()
+        {
+            // Create off-heap pool with 1MB slab size
+            using var pool = new VideoFramePool(FramePoolBackend.OffHeapSlab, slabSize: 1024 * 1024);
+            Assert.Equal(FramePoolBackend.OffHeapSlab, pool.Backend);
+            Assert.False(pool.IsDisposed);
+            Assert.Equal(0, pool.ActiveBlocks);
+
+            // 1. Regular off-heap frame fitting within 1MB slab (e.g. 320x240 RGB24 = 230,400 bytes)
+            using (var frame = pool.Rent(320, 240, VideoPixelFormat.Rgb24))
+            {
+                Assert.IsType<NativeVideoFrameBuffer>(frame);
+                Assert.Equal(1, pool.ActiveBlocks);
+                Assert.True(pool.HasActiveLeases);
+                var span = frame.AsSpan();
+                span[0] = 42;
+                Assert.Equal(42, span[0]);
+            }
+            Assert.Equal(0, pool.ActiveBlocks);
+
+            // 2. Oversize frame exceeding 1MB slab capacity (e.g. 1920x1080 RGB24 = 6,220,800 bytes)
+            // Must fallback cleanly to unpooled native allocation without throwing ArgumentOutOfRangeException
+            using (var oversizeFrame = pool.Rent(1920, 1080, VideoPixelFormat.Rgb24))
+            {
+                Assert.IsType<NativeVideoFrameBuffer>(oversizeFrame);
+                var span = oversizeFrame.AsSpan();
+                Assert.True(span.Length >= 1920 * 1080 * 3);
+                span[0] = 99;
+                Assert.Equal(99, span[0]);
+            }
+        }
+
+        [Fact]
+        public void VideoFramePool_DisposalAndSafeShutdown_WorksCorrectly()
+        {
+            var pool = new VideoFramePool(FramePoolBackend.OffHeapSlab, slabSize: 512 * 1024);
+            Assert.False(pool.IsDisposed);
+
+            // Safe shutdown with no leases
+            bool shutdownOk = pool.WaitForShutdown(TimeSpan.FromMilliseconds(50));
+            Assert.True(shutdownOk);
+            Assert.True(pool.IsDisposed);
+
+            // Double dispose must be idempotent
+            pool.Dispose();
+            Assert.True(pool.IsDisposed);
+
+            // Rent after dispose must throw ObjectDisposedException
+            Assert.Throws<ObjectDisposedException>(() => pool.Rent(100, 100, VideoPixelFormat.Gray8));
+        }
     }
 }

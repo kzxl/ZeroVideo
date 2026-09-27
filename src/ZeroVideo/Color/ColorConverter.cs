@@ -38,9 +38,13 @@ namespace ZeroVideo.Color
             int uPlaneSize = uvStride * uvHeight;
             int vPlaneOffset = yPlaneSize + uPlaneSize;
 
-
             ReadOnlySpan<byte> s = src.AsReadOnlySpan();
             Span<byte> d = dst.AsSpan();
+
+            int requiredSrc = vPlaneOffset + uPlaneSize;
+            int requiredDst = h * dst.Stride;
+            if (s.Length < requiredSrc || d.Length < requiredDst)
+                throw new ArgumentException("Source frame buffer or destination buffer is too small for the specified video dimensions and stride.");
 
             for (int y = 0; y < h; y++)
             {
@@ -135,10 +139,15 @@ namespace ZeroVideo.Color
             int h = src.Height;
 
             int uvOffset = src.Stride * h;
-
+            int uvHeight = (h + 1) / 2;
+            int requiredSrc = uvOffset + uvHeight * src.Stride;
+            int requiredDst = h * dst.Stride;
 
             ReadOnlySpan<byte> s = src.AsReadOnlySpan();
             Span<byte> d = dst.AsSpan();
+
+            if (s.Length < requiredSrc || d.Length < requiredDst)
+                throw new ArgumentException("Source frame buffer or destination buffer is too small for the specified video dimensions and stride.");
 
             for (int y = 0; y < h; y++)
             {
@@ -230,8 +239,15 @@ namespace ZeroVideo.Color
 
             int w = src.Width;
             int h = src.Height;
-            byte[] s = src.Data;
-            byte[] d = dst.Data;
+
+            int requiredSrc = h * src.Stride;
+            int requiredDst = h * dst.Stride;
+
+            ReadOnlySpan<byte> s = src.AsReadOnlySpan();
+            Span<byte> d = dst.AsSpan();
+
+            if (s.Length < requiredSrc || d.Length < requiredDst)
+                throw new ArgumentException("Source frame buffer or destination buffer is too small for the specified video dimensions and stride.");
 
             for (int y = 0; y < h; y++)
             {
