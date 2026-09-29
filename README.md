@@ -3,7 +3,8 @@
 [![ZeroPlatform Tier](https://img.shields.io/badge/ZeroPlatform-Tier%203%20(Perception%20%26%20AI)-7c3aed.svg)](https://github.com/kzxl/ZeroPlatform)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![.NET Multi-Targeting](https://img.shields.io/badge/.NET-8.0%20%7C%204.6.2%20%7C%20Standard%202.0-purple.svg)](https://dotnet.microsoft.com/)
-[![NuGet Version](https://img.shields.io/badge/NuGet-1.1.0-blue.svg)](https://www.nuget.org/packages/ZeroVideo)
+[![NuGet Version](https://img.shields.io/badge/nuget-v1.2.1-blue.svg)](https://www.nuget.org/packages/ZeroVideo)
+[![Tests: 59 Passed](https://img.shields.io/badge/Tests-59%20Passed%20(100%25)-brightgreen.svg)]()
 
 **ZeroVideo** is a sovereign, high-performance, pure C# video streaming, camera network transport, and multimedia playback engine for .NET. Completely free from heavyweight native C++ bindings (no FFmpeg or VLC unmanaged binaries required), it provides low-latency RTSP/RTP/H.264 stream ingestion, industrial Motion JPEG (MJPEG) streaming, lossless bitmap snapshot generation, strided multi-format video frame buffers, fast BT.601 color conversions, and clock-synchronized video playback.
 
